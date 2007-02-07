@@ -3205,7 +3205,9 @@ kl.div<-function(V0,mu0,V1,mu1=NA,inv=TRUE)
 
 is.positive.definite<-function (m, tol, method = c("eigen", "chol")) 
 {
-    method <- match.arg(method)
+# part of 'corpcor' package  
+
+  method <- match.arg(method)
     if (!is.matrix(m)) 
         m <- as.matrix(m)
     if (method == "eigen") {
@@ -3265,12 +3267,17 @@ ind.mle<-function(data=NA,V=NA,Sigma=NA,n=NA,ind=NA,model=NA,type=NA,tol = 1e-06
   if (any(is.na(data))+any(is.na(V))+any(is.na(Sigma))==3)
     stop("'data' or 'V' or 'Sigma' must be other than NA")
 
+  if (!any(is.na(data))) data<-as.matrix(data)
+
   if (any(!is.finite(data))+any(!is.finite(V))+any(!is.finite(Sigma))==3)
     stop("'data', 'V' and 'Sigma' must contain only finite values")
 
   if (all(is.finite(data))) 
   {  if (!is.numeric(data) || ncol(data)!=4 || nrow(data)<3)
           stop("'data' must be a four column real matrix with at least three rows")
+
+     if (!is.positive.definite(var(data))) 
+          stop("variance matrix of 'data' must not be singular");    
 
      n<-nrow(data)
      Sigma<-var(data)*(n-1)/n;
@@ -3342,12 +3349,17 @@ model.selection<-function(data=NA,V=NA,Sigma=NA,n=NA,tol = 1e-06,nb.trials=10,se
   if (any(is.na(data))+any(is.na(V))+any(is.na(Sigma))==3)
     stop("'data' or 'V' or 'Sigma' must be other than NA")
 
+  if (!any(is.na(data))) data<-as.matrix(data)
+
   if (any(!is.finite(data))+any(!is.finite(V))+any(!is.finite(Sigma))==3)
     stop("'data', 'V' and 'Sigma' must contain only finite values")
 
   if (all(is.finite(data))) 
   {  if (!is.numeric(data) || ncol(data)!=4 || nrow(data)<3)
           stop("'data' must be a four column real matrix with at least three rows")
+
+     if (!is.positive.definite(var(data))) 
+          stop("variance matrix of 'data' must not be singular");    
 
      n<-nrow(data)
      Sigma<-var(data)*(n-1)/n;
@@ -3410,6 +3422,90 @@ if (search.table) return(list(model=besti,type=iii$type,ind=iii$ind,best.bic=bes
 else  return(list(model=besti,type=iii$type,ind=iii$ind,best.bic=bestbic,V=bestv,Sigma=solve(bestv),gmodel=gbesti,gV=gbestv,gSigma=solve(gbestv),search.table=vysledky))
 }
 
+var.estimate<-function(data=NA,inv=TRUE,tol = 1e-06,nb.trials=10,trim=0.1)
+{
+
+make.pd <- function(m, tol=NA)
+{
+
+# part of 'corpcor' package as function 'make.positive.definite' 
+
+   es <- eigen(m)
+   esv <- es$values
+               
+   if (is.na(tol))
+     tol <- d*max(abs(esv))*.Machine$double.eps 
+   delta <-  2*tol 
+                                             
+   tau <- pmax(0, delta - esv)
+   dm <- es$vectors %*% diag(tau, d) %*% t(es$vectors)    
+   
+   return( m +  dm)
+}
+
+  if (any(is.na(data)))
+    stop("'data' must not contain NA values")
+
+  data<-as.matrix(data)
+
+  if (any(!is.finite(data)))
+    stop("'data' must not contain infinite values")
+
+  if (!is.numeric(data) || ncol(data)<4 || nrow(data)<3)
+          stop("'data' must be a real matrix with at least four columns and three rows")
+
+  if (!is.positive.definite(var(data))) 
+          stop("variance matrix of 'data' must not be singular");    
+
+  n<-nrow(data)
+  m<-ncol(data)
+  Sigma<-var(data)*(n-1)/n;
+  V<-solve(Sigma);
+
+  if (!is.numeric(nb.trials) || any(!is.finite(nb.trials)) ||  (length(nb.trials)!=1) || (nb.trials!=trunc(nb.trials)) || (nb.trials<1))
+        stop("'nb.trials' must be a positive integer")
+  
+  if (!is.numeric(tol) || any(!is.finite(tol)) ||  (length(tol)!=1) || (tol<0))
+        stop("'tol' must be a positive real number")
+
+  if (!is.numeric(trim) || any(!is.finite(trim)) ||  (length(trim)!=1) || (trim<0) || !(trim<0.5))
+        stop("'trim' must be a number between 0 and 0.5")
+
+  komb<-combn(m,4)
+  nk<-ncol(komb)  
+  res<-rep(NA,m*m*nk*6/(m*(m-1)/2))
+  dim(res)<-c(m,m,nk*6/(m*(m-1)/2))
+
+  for (i in 1:nk)
+  {
+    tato<-komb[,i]  
+    if (inv) fit<-model.selection(V=V[tato,tato],n=n)$V else fit<-model.selection(Sigma=Sigma[tato,tato],n=n)$Sigma
+
+    for (k in 1:4) res[tato[k],tato[k],1]<-fit[k,k]
+
+    for (k in 1:3)
+      for (l in (k+1):4)
+      {
+        j<-1;
+        while (!is.na(res[tato[k],tato[l],j])) j<-j+1
+        res[tato[k],tato[l],j]<-fit[k,l]
+        res[tato[l],tato[k],j]<-fit[k,l] 
+      }  
+  }
+
+  res2<-matrix(0,m,m)
+  for (k in 1:m)
+    for (l in 1:m) 
+      res2[k,l]<-mean(res[k,l,],trim=trim,na.rm=TRUE)
+  pd<-is.positive.definite(res2)
+  
+  if (!pd) 
+  {
+    warning('Result is not positive-definite matrix');
+    if (inv) return(list(V=res2,Vpsd=make.pd(V))) else return(list(Sigma=res2,Sigmapsd=make.pd(Sigma)))
+  } else if (inv) return(list(Sigma=solve(res2),V=res2)) else return(list(Sigma=res2,V=solve(res2)))
+}
+
 ind.test<-function (v,i,tol=0.000001,inv=TRUE) 
 {
 
@@ -3465,6 +3561,9 @@ ind.plot<-function(ind=NA,model=NA,type=NA)
 
 ind<-ind.identification(ind,model,type)$ind
  
+opt<-options()
+options(show.error.messages=FALSE,warn=-1)
+
 if(dev.cur() == 1) get(getOption("device"))(width=3.55,height=3.55,rescale="fixed")
 op<-par()
 par(plt=c(0,1,0,1))
@@ -3503,6 +3602,7 @@ if (substr(ind,23,23)=="1") {
 lines(x=-0.05+sss/2*0.7+0.15-((sss-0.5)^3/2+1/2^4)/sqrt(2),y=-0.05+1-(sss/2*0.7+0.15+((sss-0.5)^3/2+1/2^4)/sqrt(2)),lwd=5)
 lines(x=-0.05+1-(sss/2*0.7+0.15+((sss-0.5)^3/2+1/2^4)/sqrt(2)),y=-0.05+(sss/2*0.7+0.15-((sss-0.5)^3/2+1/2^4)/sqrt(2)),lwd=5)}
 par(op)
+options(opt)
 }
 
 ind.print<-function(ind=NA,model=NA,type=NA)
