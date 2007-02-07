@@ -3430,6 +3430,8 @@ make.pd <- function(m, tol=NA)
 
 # part of 'corpcor' package as function 'make.positive.definite' 
 
+   d <- dim(m)[1]
+
    es <- eigen(m)
    esv <- es$values
                
